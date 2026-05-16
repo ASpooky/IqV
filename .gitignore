@@ -2,3 +2,4 @@
 .direnv/
 .venv/
 .vscode/
+.scenario_voice/

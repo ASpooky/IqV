@@ -17,6 +17,7 @@
           packages = [
             python
             pkgs.uv
+            pkgs.black
 
             # audio I/O (pyaudio / sounddevice)
             pkgs.portaudio
