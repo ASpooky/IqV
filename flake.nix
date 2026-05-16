@@ -31,8 +31,6 @@
           ];
 
           env = {
-            # uv が正しい Python を使うよう固定
-            UV_PYTHON = "${python}/bin/python";
             # 共有ライブラリのパスを通す (portaudio など)
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
               pkgs.portaudio
@@ -46,8 +44,10 @@
               echo "[nix] Creating virtual environment..."
               uv venv --python ${python}/bin/python
             fi
-            source .venv/bin/activate
-            echo "[nix] IqV dev shell ready. Run: uv sync"
+            export VIRTUAL_ENV="$PWD/.venv"
+            export PATH="$VIRTUAL_ENV/bin:$PATH"
+            unset UV_PYTHON
+            echo "[nix] IqV dev shell ready. Run: uv pip install \"pipecat-ai[...]\""
           '';
         };
       }
