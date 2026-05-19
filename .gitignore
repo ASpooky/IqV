@@ -4,3 +4,6 @@
 .vscode/
 .scenario_voice/
 .env
+.venv*
+node_modules/
+recordings/
