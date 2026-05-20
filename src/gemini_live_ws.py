@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sqlite3
 from dotenv import load_dotenv
 
 from pipecat.transports.websocket.server import WebsocketServerTransport, WebsocketServerParams
@@ -13,7 +14,6 @@ from pipecat.frames.frames import (
     Frame, StartFrame, LLMContextFrame, AudioRawFrame, InputAudioRawFrame
 )
 from pipecat.processors.aggregators.llm_context import LLMContext
-
 
 
 class RawPCMSerializer(FrameSerializer):
@@ -38,10 +38,30 @@ class RawPCMSerializer(FrameSerializer):
             )
         return None
 
+
 load_dotenv()
 
 PIPECAT_HOST = os.getenv("PIPECAT_HOST", "localhost")
 PIPECAT_PORT = int(os.getenv("PIPECAT_PORT", "8765"))
+DB_PATH = os.getenv("DB_PATH", "data/config.db")
+
+DEFAULTS = {
+    "voice_id": "Aoede",
+    "system_instruction": "You are a helpful voice assistant. Respond concisely.",
+    "name": "Gemini",
+}
+
+
+def read_config() -> dict:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT key, value FROM config")
+        rows = cur.fetchall()
+        conn.close()
+        return {**DEFAULTS, **dict(rows)}
+    except Exception:
+        return dict(DEFAULTS)
 
 
 class ContextBootstrapper(FrameProcessor):
@@ -59,36 +79,47 @@ class ContextBootstrapper(FrameProcessor):
 
 
 async def run():
-    transport = WebsocketServerTransport(
-        host=PIPECAT_HOST,
-        port=PIPECAT_PORT,
-        params=WebsocketServerParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            audio_in_sample_rate=16_000,
-            audio_out_sample_rate=16_000,
-            serializer=RawPCMSerializer(sample_rate=16_000, num_channels=1),
-        ),
-    )
+    while True:
+        config = read_config()
+        print(f"[pipecat] config: voice={config['voice_id']} name={config['name']}")
 
-    llm = GeminiLiveLLMService(
-        api_key=os.environ["GOOGLE_API_KEY"],
-        voice_id="Aoede",
-        system_instruction="You are a helpful voice assistant. Respond concisely.",
-    )
+        transport = WebsocketServerTransport(
+            host=PIPECAT_HOST,
+            port=PIPECAT_PORT,
+            params=WebsocketServerParams(
+                audio_in_enabled=True,
+                audio_out_enabled=True,
+                audio_in_sample_rate=16_000,
+                audio_out_sample_rate=16_000,
+                serializer=RawPCMSerializer(sample_rate=16_000, num_channels=1),
+            ),
+        )
 
-    context = LLMContext()
+        system_instruction = f"Your name is {config['name']}. {config['system_instruction']}"
 
-    pipeline = Pipeline([
-        transport.input(),
-        ContextBootstrapper(context=context),
-        llm,
-        transport.output(),
-    ])
+        llm = GeminiLiveLLMService(
+            api_key=os.environ["GOOGLE_API_KEY"],
+            voice_id=config["voice_id"],
+            system_instruction=system_instruction,
+        )
 
-    task = PipelineTask(pipeline)
-    print(f"[pipecat] listening on ws://{PIPECAT_HOST}:{PIPECAT_PORT}")
-    await PipelineRunner(handle_sigint=True).run(task)
+        context = LLMContext()
+
+        pipeline = Pipeline([
+            transport.input(),
+            ContextBootstrapper(context=context),
+            llm,
+            transport.output(),
+        ])
+
+        task = PipelineTask(pipeline)
+        print(f"[pipecat] listening on ws://{PIPECAT_HOST}:{PIPECAT_PORT}")
+        try:
+            await PipelineRunner(handle_sigint=False).run(task)
+        except Exception as e:
+            print(f"[pipecat] session error: {e}")
+
+        print("[pipecat] session ended, reloading config...")
 
 
 if __name__ == "__main__":

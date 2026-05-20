@@ -112,6 +112,10 @@ export class PipecatClient {
 
     opusStream.pipe(decoder);
 
+    decoder.on("error", (err) => {
+      console.warn(`[opus] decode error userId=${userId}:`, err.message);
+    });
+
     decoder.on("data", (chunk: Buffer) => {
       const pcm16 = resample48to16mono(chunk);
       this.enqueueMix(pcm16);

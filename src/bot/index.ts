@@ -12,6 +12,7 @@ import {
   VoiceConnection,
 } from "@discordjs/voice";
 import { PipecatClient } from "./voice/pipecatClient.js";
+import { getConfig, setConfig } from "../db/config.js";
 
 const pipecatClients = new Map<string, PipecatClient>();
 
@@ -153,6 +154,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
       pipecatClients.delete(i.guild!.id);
       conn.destroy();
       await i.reply("退出しました。");
+      return;
+    }
+
+    if (i.commandName === "setvoice") {
+      const voice = i.options.getString("voice", true);
+      setConfig("voice_id", voice);
+      await i.reply({ content: `ボイスを \`${voice}\` に変更しました（次回接続時に反映）`, ephemeral: true });
+      return;
+    }
+
+    if (i.commandName === "setprompt") {
+      const prompt = i.options.getString("prompt", true);
+      setConfig("system_instruction", prompt);
+      await i.reply({ content: `システムプロンプトを変更しました（次回接続時に反映）\n\`\`\`\n${prompt}\n\`\`\``, ephemeral: true });
+      return;
+    }
+
+    if (i.commandName === "setname") {
+      const name = i.options.getString("name", true);
+      setConfig("name", name);
+      await i.reply({ content: `名前を \`${name}\` に変更しました（次回接続時に反映）`, ephemeral: true });
+      return;
     }
   } catch (err: any) {
     if (err?.code === 10062) return; // stale interaction (tsx reload replay), ignore
