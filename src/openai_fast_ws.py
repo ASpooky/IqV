@@ -161,17 +161,7 @@ async def run():
         context.set_messages(context_messages)
 
         # ツール(関数)の定義
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "leave_voice_channel",
-                    "description": "Leave the voice channel and end the session when the user indicates the conversation is over.",
-                    "parameters": {"type": "object", "properties": {}, "required": []},
-                },
-            }
-        ]
-        context.set_tools(tools)
+        # (Pipecat 1.2+ では `register_function` 側でパラメーターや説明を渡すだけで、自動的にツールスキーマが生成されコンテキストに追加されます)
 
         user_aggregator = LLMUserAggregator(context)
         assistant_aggregator = LLMAssistantAggregator(context)
@@ -188,7 +178,12 @@ async def run():
             await asyncio.sleep(2.0)
             await task.queue_frame(EndFrame())
 
-        llm.register_function("leave_voice_channel", leave_voice_channel)
+        llm.register_function(
+            "leave_voice_channel",
+            leave_voice_channel,
+            description="Leave the voice channel and end the session when the user indicates the conversation is over.",
+            parameters={"type": "object", "properties": {}},
+        )
 
         # 3. パイプラインの構築
         pipeline = Pipeline(
