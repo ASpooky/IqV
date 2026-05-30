@@ -12,7 +12,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineTask
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.frames.frames import Frame, StartFrame, AudioRawFrame, InputAudioRawFrame
-from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema, FunctionSchema
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMAssistantAggregator,
     LLMUserAggregator,
@@ -27,6 +27,8 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.frames.frames import EndFrame
 from loguru import logger
+
+from pipecat.services.llm_service import FunctionCallParams
 
 # ログをファイル出力する設定 (loguru)
 # 標準出力とファイル(logs/pipecat.log)の両方に出力
@@ -162,35 +164,25 @@ async def run():
         context.set_messages(context_messages)
 
         # ツール(関数)の定義
-        tools_schema = ToolsSchema(
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "leave_voice_channel",
-                        "description": "Leave the voice channel and end the session when the user indicates the conversation is over.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {},
-                            "required": [],
-                        },
-                    },
-                }
-            ]
-        )
-        context.set_tools(tools_schema)
+        tools = [
+            FunctionSchema(
+                name="leave_voice_channel",
+                description="Leave the voice channel and end the session when the user indicates the conversation is over.",
+                properties={},
+                required=[],
+            )
+        ]
+        context.set_tools(ToolsSchema(standard_tools=tools))
 
         user_aggregator = LLMUserAggregator(context)
         assistant_aggregator = LLMAssistantAggregator(context)
 
         # ツール呼び出し時のハンドラー
-        async def leave_voice_channel(
-            function_name, tool_call_id, args, llm, context, result_callback
-        ):
+        async def leave_voice_channel(params: FunctionCallParams):
             logger.info(
                 "👋 User requested to end the conversation. Leaving voice channel..."
             )
-            await result_callback("Leaving the voice channel now. Goodbye!")
+            await params.result_callback("Leaving the voice channel now. Goodbye!")
             # 少し待ってから終了フレームを投げる
             await asyncio.sleep(2.0)
             await task.queue_frame(EndFrame())
