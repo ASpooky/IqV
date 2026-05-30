@@ -8,3 +8,7 @@
 node_modules/
 recordings/
 data/
+dist/
+logs/
+__pycache__/
+*.pyc
