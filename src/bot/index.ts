@@ -57,6 +57,13 @@ function connectAndRecord(
 
   const pipecat = new PipecatClient(connection);
 
+  pipecat.onServerClosed = () => {
+    console.log(`[connectAndRecord] Server closed connection intentionally, leaving voice channel...`);
+    pipecat.destroy();
+    pipecatClients.delete(guildId);
+    connection.destroy();
+  };
+
   connection.receiver.speaking.on("start", (userId) => {
     console.log(`[speaking] start userId=${userId}`);
     pipecat.streamUser(userId);

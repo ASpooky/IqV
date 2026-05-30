@@ -66,6 +66,9 @@ export class PipecatClient {
   private pendingMix: Buffer | null = null;
   private mixScheduled = false;
 
+  // Pythonサーバーから意図的に切断された時のコールバック
+  public onServerClosed?: () => void;
+
   constructor(private connection: VoiceConnection) {
     this.player = createAudioPlayer();
     connection.subscribe(this.player);
@@ -86,9 +89,20 @@ export class PipecatClient {
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code, reason) => {
+      console.log(`[pipecat] ws closed code=${code} reason=${reason}`);
       this.ws = null;
       if (this.destroyed) return;
+      
+      // サーバー側から意図的に終了された場合(通常終了コード1000等)は再接続しない
+      if (code === 1000) {
+        if (this.onServerClosed) {
+          this.onServerClosed();
+        }
+        return;
+      }
+      
+      // それ以外の異常切断時は再接続を試みる
       setTimeout(() => this.connect(), 3_000);
     });
 
