@@ -24,6 +24,7 @@ from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.services.openai.stt import OpenAISTTService
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.processors.audio.vad_processor import VADProcessor
+from pipecat.frames.frames import EndFrame
 from loguru import logger
 
 # ログをファイル出力する設定 (loguru)
@@ -151,14 +152,43 @@ async def run():
 
         # 2. 会話コンテキストの初期化
         system_instruction = (
-            f"Your name is {config['name']}. {config['system_instruction']}"
+            f"Your name is {config['name']}. {config['system_instruction']}\n\n"
+            "If the user says things like 'That's all', 'See you', 'Bye', 'You can leave now', or clearly indicates they want to end the conversation, "
+            "you MUST call the `leave_voice_channel` tool to exit."
         )
         context = LLMContext()
         context_messages = [{"role": "system", "content": system_instruction}]
         context.set_messages(context_messages)
 
+        # ツール(関数)の定義
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "leave_voice_channel",
+                    "description": "Leave the voice channel and end the session when the user indicates the conversation is over.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }
+        ]
+        context.set_tools(tools)
+
         user_aggregator = LLMUserAggregator(context)
         assistant_aggregator = LLMAssistantAggregator(context)
+
+        # ツール呼び出し時のハンドラー
+        async def leave_voice_channel(
+            function_name, tool_call_id, args, llm, context, result_callback
+        ):
+            logger.info(
+                "👋 User requested to end the conversation. Leaving voice channel..."
+            )
+            await result_callback("Leaving the voice channel now. Goodbye!")
+            # 少し待ってから終了フレームを投げる
+            await asyncio.sleep(2.0)
+            await task.queue_frame(EndFrame())
+
+        llm.register_function("leave_voice_channel", leave_voice_channel)
 
         # 3. パイプラインの構築
         pipeline = Pipeline(
