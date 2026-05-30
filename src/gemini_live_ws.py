@@ -3,7 +3,10 @@ import os
 import sqlite3
 from dotenv import load_dotenv
 
-from pipecat.transports.websocket.server import WebsocketServerTransport, WebsocketServerParams
+from pipecat.transports.websocket.server import (
+    WebsocketServerTransport,
+    WebsocketServerParams,
+)
 from pipecat.serializers.base_serializer import FrameSerializer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineTask
@@ -11,7 +14,11 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import (
-    Frame, StartFrame, LLMContextFrame, AudioRawFrame, InputAudioRawFrame
+    Frame,
+    StartFrame,
+    LLMContextFrame,
+    AudioRawFrame,
+    InputAudioRawFrame,
 )
 from pipecat.processors.aggregators.llm_context import LLMContext
 
@@ -95,7 +102,9 @@ async def run():
             ),
         )
 
-        system_instruction = f"Your name is {config['name']}. {config['system_instruction']}"
+        system_instruction = (
+            f"Your name is {config['name']}. {config['system_instruction']}"
+        )
 
         llm = GeminiLiveLLMService(
             api_key=os.environ["GOOGLE_API_KEY"],
@@ -105,12 +114,14 @@ async def run():
 
         context = LLMContext()
 
-        pipeline = Pipeline([
-            transport.input(),
-            ContextBootstrapper(context=context),
-            llm,
-            transport.output(),
-        ])
+        pipeline = Pipeline(
+            [
+                transport.input(),
+                ContextBootstrapper(context=context),
+                llm,
+                transport.output(),
+            ]
+        )
 
         task = PipelineTask(pipeline)
         print(f"[pipecat] listening on ws://{PIPECAT_HOST}:{PIPECAT_PORT}")
