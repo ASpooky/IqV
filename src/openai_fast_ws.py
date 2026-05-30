@@ -12,6 +12,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineTask
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.frames.frames import Frame, StartFrame, AudioRawFrame, InputAudioRawFrame
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMAssistantAggregator,
     LLMUserAggregator,
@@ -161,7 +162,23 @@ async def run():
         context.set_messages(context_messages)
 
         # ツール(関数)の定義
-        # (Pipecat 1.2+ では `register_function` 側でパラメーターや説明を渡すだけで、自動的にツールスキーマが生成されコンテキストに追加されます)
+        tools_schema = ToolsSchema(
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "leave_voice_channel",
+                        "description": "Leave the voice channel and end the session when the user indicates the conversation is over.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                        },
+                    },
+                }
+            ]
+        )
+        context.set_tools(tools_schema)
 
         user_aggregator = LLMUserAggregator(context)
         assistant_aggregator = LLMAssistantAggregator(context)
@@ -178,12 +195,7 @@ async def run():
             await asyncio.sleep(2.0)
             await task.queue_frame(EndFrame())
 
-        llm.register_function(
-            "leave_voice_channel",
-            leave_voice_channel,
-            description="Leave the voice channel and end the session when the user indicates the conversation is over.",
-            parameters={"type": "object", "properties": {}},
-        )
+        llm.register_function("leave_voice_channel", leave_voice_channel)
 
         # 3. パイプラインの構築
         pipeline = Pipeline(
