@@ -16,7 +16,8 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.tts import OpenAITTSService
-from pipecat.services.openai.stt import OpenAISTTService
+from pipecat.services.deepgram.stt import DeepgramSTTService
+from pipecat.transcriptions.language import Language
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.frames.frames import EndFrame
@@ -43,9 +44,12 @@ async def run(config: PipelineConfig, transport: FastAPIWebsocketTransport):
         settings=OpenAITTSService.Settings(voice=config.voice_id),
     )
 
-    stt = OpenAISTTService(
-        api_key=os.environ["OPENAI_API_KEY"],
-        settings=OpenAISTTService.Settings(model="whisper-1"),
+    stt = DeepgramSTTService(
+        api_key=os.environ["DEEPGRAM_API_KEY"],
+        settings=DeepgramSTTService.Settings(
+            language=Language.JA,
+            utterance_end_ms=1000,
+        ),
     )
 
     system_instruction = (
