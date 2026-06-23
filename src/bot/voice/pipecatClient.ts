@@ -10,9 +10,6 @@ import prism from "prism-media";
 import { WebSocket } from "ws";
 import { PassThrough } from "stream";
 
-const PIPECAT_URL = process.env.PIPECAT_URL;
-if (!PIPECAT_URL) throw new Error("PIPECAT_URL is not set");
-
 // 48kHz stereo int16 LE → 16kHz mono int16 LE
 // Box-car average of 3 consecutive stereo frames (simple low-pass) + L/R downmix
 function resample48to16mono(input: Buffer): Buffer {
@@ -66,21 +63,21 @@ export class PipecatClient {
   private pendingMix: Buffer | null = null;
   private mixScheduled = false;
 
-  // Pythonサーバーから意図的に切断された時のコールバック
-  public onServerClosed?: () => void;
+  public onClosed?: () => void;
 
-  constructor(private connection: VoiceConnection) {
+  constructor(private connection: VoiceConnection, private wsUrl: string) {
     this.player = createAudioPlayer();
     connection.subscribe(this.player);
     this.connect();
   }
 
   private connect(): void {
-    const ws = new WebSocket(PIPECAT_URL!);
+    const ws = new WebSocket(this.wsUrl);
     ws.binaryType = "nodebuffer";
 
     ws.on("open", () => {
       this.ws = ws;
+      ws.send(JSON.stringify({ type: "client-ready" }));
     });
 
     ws.on("message", (data: Buffer | string) => {
@@ -92,18 +89,9 @@ export class PipecatClient {
     ws.on("close", (code, reason) => {
       console.log(`[pipecat] ws closed code=${code} reason=${reason}`);
       this.ws = null;
-      if (this.destroyed) return;
-      
-      // サーバー側から意図的に終了された場合(通常終了コード1000等)は再接続しない
-      if (code === 1000) {
-        if (this.onServerClosed) {
-          this.onServerClosed();
-        }
-        return;
+      if (!this.destroyed) {
+        this.onClosed?.();
       }
-      
-      // それ以外の異常切断時は再接続を試みる
-      setTimeout(() => this.connect(), 3_000);
     });
 
     ws.on("error", (err) => {

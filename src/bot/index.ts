@@ -12,7 +12,17 @@ import {
   VoiceConnection,
 } from "@discordjs/voice";
 import { PipecatClient } from "./voice/pipecatClient.js";
-import { getConfig, setConfig } from "../db/config.js";
+import {
+  getPersonas,
+  getPersona,
+  getActivePersona,
+  setActivePersona,
+  upsertPersona,
+  deletePersona,
+} from "../db/config.js";
+
+const PIPECAT_BASE_URL = process.env.PIPECAT_BASE_URL;
+if (!PIPECAT_BASE_URL) throw new Error("PIPECAT_BASE_URL is not set");
 
 const pipecatClients = new Map<string, PipecatClient>();
 
@@ -26,11 +36,32 @@ const client = new Client({
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function connectAndRecord(
+async function createSession(): Promise<string> {
+  const persona = getActivePersona();
+  const config = {
+    name: persona.display_name,
+    voice_id: persona.voice_id,
+    system_instruction: persona.system_instruction,
+  };
+
+  const res = await fetch(`${PIPECAT_BASE_URL}/sessions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+
+  if (!res.ok) throw new Error(`POST /sessions failed: ${res.status}`);
+
+  const { ws_path } = await res.json() as { session_id: string; ws_path: string };
+  const wsBase = PIPECAT_BASE_URL!.replace(/^http/, "ws");
+  return `${wsBase}${ws_path}`;
+}
+
+async function connectAndRecord(
   guildId: string,
   channelId: string,
   adapterCreator: Parameters<typeof joinVoiceChannel>[0]["adapterCreator"],
-): { connection: VoiceConnection; pipecat: PipecatClient } {
+): Promise<{ connection: VoiceConnection; pipecat: PipecatClient }> {
   console.log(`[connectAndRecord] joining guildId=${guildId} channelId=${channelId}`);
 
   const connection = joinVoiceChannel({
@@ -39,8 +70,6 @@ function connectAndRecord(
     adapterCreator,
     selfDeaf: false,
   });
-
-  console.log(`[connectAndRecord] initial state=${connection.state.status}`);
 
   connection.on("stateChange", (old, s) => {
     console.log(`[voice] state ${old.status} → ${s.status}`);
@@ -55,10 +84,11 @@ function connectAndRecord(
     console.log(`[voice debug] ${msg}`);
   });
 
-  const pipecat = new PipecatClient(connection);
+  const wsUrl = await createSession();
+  const pipecat = new PipecatClient(connection, wsUrl);
 
-  pipecat.onServerClosed = () => {
-    console.log(`[connectAndRecord] Server closed connection intentionally, leaving voice channel...`);
+  pipecat.onClosed = () => {
+    console.log(`[connectAndRecord] pipeline closed, leaving voice channel...`);
     pipecat.destroy();
     pipecatClients.delete(guildId);
     connection.destroy();
@@ -75,8 +105,7 @@ function connectAndRecord(
 // ── events ────────────────────────────────────────────────────────────────────
 
 client.once(Events.ClientReady, (c) => {
-
-  // 起動時に以前の接続をチェック、厳密にはcacheと実体がずれる可能性はあるが一旦許容
+  console.log(`[bot] ready as ${c.user.tag}, active persona: ${getActivePersona().name}`);
   for (const guild of c.guilds.cache.values()) {
     const me = guild.members.cache.get(c.user.id);
     if (me?.voice.channelId) {
@@ -95,26 +124,24 @@ client.on(Events.Error, (err) => {
   console.error("[client] error:", err.message);
 });
 
-client.on(Events.VoiceStateUpdate, (before: VoiceState, after: VoiceState) => {
+client.on(Events.VoiceStateUpdate, async (before: VoiceState, after: VoiceState) => {
   if (after.member?.user.bot) return;
   if (!after.guild) {
-    console.error("error: after guild is nothing.")
-    return
+    console.error("error: after guild is nothing.");
+    return;
   }
 
   const guild = after.guild;
   const existing = getVoiceConnection(guild.id);
 
-  // ユーザーが入室 → 追従
   if (after.channel && !before.channel && !existing) {
     pipecatClients.get(guild.id)?.destroy();
     pipecatClients.delete(guild.id);
-    const { pipecat } = connectAndRecord(guild.id, after.channelId!, guild.voiceAdapterCreator);
+    const { pipecat } = await connectAndRecord(guild.id, after.channelId!, guild.voiceAdapterCreator);
     pipecatClients.set(guild.id, pipecat);
     return;
   }
 
-  // ユーザーが退室 → 切断
   if (
     before.channel &&
     !after.channel &&
@@ -145,9 +172,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       pipecatClients.get(i.guild!.id)?.destroy();
       pipecatClients.delete(i.guild!.id);
-      const { pipecat } = connectAndRecord(i.guild!.id, vc.id, i.guild!.voiceAdapterCreator);
+      const { pipecat } = await connectAndRecord(i.guild!.id, vc.id, i.guild!.voiceAdapterCreator);
       pipecatClients.set(i.guild!.id, pipecat);
-      await i.editReply(`✓ \`${vc.name}\` に参加`);
+      await i.editReply(`✓ \`${vc.name}\` に参加 (ペルソナ: ${getActivePersona().name})`);
       return;
     }
 
@@ -164,28 +191,50 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    if (i.commandName === "setvoice") {
-      const voice = i.options.getString("voice", true);
-      setConfig("voice_id", voice);
-      await i.reply({ content: `ボイスを \`${voice}\` に変更しました（次回接続時に反映）`, ephemeral: true });
-      return;
-    }
+    if (i.commandName === "persona") {
+      const sub = i.options.getSubcommand();
 
-    if (i.commandName === "setprompt") {
-      const prompt = i.options.getString("prompt", true);
-      setConfig("system_instruction", prompt);
-      await i.reply({ content: `システムプロンプトを変更しました（次回接続時に反映）\n\`\`\`\n${prompt}\n\`\`\``, ephemeral: true });
-      return;
-    }
+      if (sub === "list") {
+        const personas = getPersonas();
+        const active = getActivePersona();
+        const lines = personas.map((p) =>
+          `${p.name === active.name ? "▶" : "　"} **${p.name}** — ${p.display_name} / ${p.voice_id}`
+        );
+        await i.reply({ content: lines.join("\n") || "ペルソナがありません", ephemeral: true });
+        return;
+      }
 
-    if (i.commandName === "setname") {
-      const name = i.options.getString("name", true);
-      setConfig("name", name);
-      await i.reply({ content: `名前を \`${name}\` に変更しました（次回接続時に反映）`, ephemeral: true });
-      return;
+      if (sub === "use") {
+        const name = i.options.getString("name", true);
+        const persona = getPersona(name);
+        if (!persona) {
+          await i.reply({ content: `ペルソナ \`${name}\` が見つかりません。`, ephemeral: true });
+          return;
+        }
+        setActivePersona(name);
+        await i.reply({ content: `ペルソナを **${name}** (${persona.display_name}) に変更しました。次回接続時に反映されます。`, ephemeral: true });
+        return;
+      }
+
+      if (sub === "create") {
+        const name = i.options.getString("name", true);
+        const displayName = i.options.getString("display_name", true);
+        const voiceId = i.options.getString("voice_id", true);
+        const prompt = i.options.getString("prompt", true);
+        upsertPersona({ name, display_name: displayName, voice_id: voiceId, system_instruction: prompt });
+        await i.reply({ content: `ペルソナ **${name}** を保存しました。`, ephemeral: true });
+        return;
+      }
+
+      if (sub === "delete") {
+        const name = i.options.getString("name", true);
+        deletePersona(name);
+        await i.reply({ content: `ペルソナ **${name}** を削除しました。`, ephemeral: true });
+        return;
+      }
     }
   } catch (err: any) {
-    if (err?.code === 10062) return; // stale interaction (tsx reload replay), ignore
+    if (err?.code === 10062) return;
     console.error("[interaction] error:", err);
   }
 });
